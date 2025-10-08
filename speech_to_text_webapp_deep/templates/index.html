@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dysarthria Speech Analysis</title>
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #6a11cb, #2575fc);
+            color: #fff;
+            overflow-x: hidden;
+            animation: fadeIn 1s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        h1 {
+            text-align: center;
+            color: #ffffff;
+            text-shadow: 4px 4px 8px #000000;
+            font-size: 3rem;
+        }
+
+        .upload-box {
+            border: 3px solid #ffffff;
+            border-radius: 20px;
+            padding: 50px;
+            text-align: center;
+            margin: 40px 0;
+            background: rgba(0, 0, 0, 0.4);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(10px);
+        }
+
+        #audioFile {
+            margin-bottom: 15px;
+            width: 100%;
+            max-width: 300px;
+            padding: 10px;
+        }
+
+        .btn {
+            margin: 15px;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 16px;
+            cursor: pointer;
+            color: white;
+            font-size: 20px;
+            transition: transform 0.3s ease, background 0.3s ease;
+        }
+
+        .btn-primary { background: linear-gradient(45deg, #ff9a9e, #fad0c4); }
+        .btn-primary:hover { background: linear-gradient(45deg, #ff6f61, #ff4757); transform: scale(1.15); }
+
+        .btn-secondary { background: linear-gradient(45deg, #2af598, #009efd); }
+        .btn-secondary:hover { background: linear-gradient(45deg, #14e6a1, #14a3e6); transform: scale(1.15); }
+
+        #loading-indicator { 
+            display: none; 
+            margin-top: 10px; 
+            font-weight: bold; 
+            color: #FFC312; 
+        }
+
+        #file-name { 
+            margin: 20px 0; 
+            font-weight: bold; 
+            color: #ffffff; 
+        }
+
+        #error-message { 
+            color: #FF6F61; 
+            margin-top: 20px; 
+            font-size: 18px; 
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            display: none;
+        }
+
+        #audio-player { 
+            display: none; 
+            margin-top: 30px; 
+            width: 100%; 
+        }
+
+        .result-box {
+            margin-top: 40px;
+            padding: 40px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 3px solid #ffffff;
+            border-radius: 20px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.4);
+            max-height: 600px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .result-section {
+            padding: 15px 0;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+            font-size: 18px;
+        }
+
+        .result-section:last-child { border-bottom: none; }
+
+        .result-title {
+            font-size: 24px;
+            margin-bottom: 15px;
+            color: #FFC312;
+            display: flex;
+            align-items: center;
+        }
+
+        .result-title i {
+            margin-right: 10px;
+            font-size: 28px;
+        }
+
+        .result-content {
+            margin-left: 40px;
+        }
+
+        .confidence-meter {
+            height: 10px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 5px;
+            margin: 5px 0 10px 0;
+            overflow: hidden;
+        }
+
+        .confidence-level {
+            height: 100%;
+            background: linear-gradient(90deg, #ff9a9e, #fad0c4);
+            border-radius: 5px;
+        }
+
+        .severity-indicator {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+
+        .severity-mild { background-color: #4CAF50; }
+        .severity-moderate { background-color: #FFC107; color: #333; }
+        .severity-severe { background-color: #F44336; }
+        .severity-control { background-color: #2196F3; }
+
+        .probability-bars {
+            display: flex;
+            gap: 5px;
+            margin-top: 10px;
+            height: 100px;
+            position: relative;
+            padding-bottom: 30px;
+        }
+
+        .probability-bar {
+            flex: 1;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.2);
+            position: relative;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        .probability-fill {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, #4CAF50, #8BC34A);
+            transition: height 0.5s ease;
+        }
+
+        .probability-label {
+            position: absolute;
+            width: 100%;
+            text-align: center;
+            bottom: -25px;
+            font-size: 12px;
+        }
+
+        .transcription-text {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 10px;
+            line-height: 1.6;
+        }
+
+        .dysarthria-result {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .dysarthria-icon {
+            font-size: 24px;
+            margin-right: 10px;
+        }
+
+        .dysarthria-positive { color: #F44336; }
+        .dysarthria-negative { color: #4CAF50; }
+
+        .file-size-warning {
+            color: #FFC107;
+            display: none;
+            margin-top: 10px;
+        }
+
+        .diagnosis-result {
+            font-size: 20px;
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        @media (max-width: 768px) {
+            .upload-box {
+                padding: 20px;
+            }
+            
+            .btn {
+                padding: 10px 20px;
+                font-size: 16px;
+                margin: 10px 5px;
+            }
+            
+            h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+    <h1>Dysarthria Speech Analysis</h1>
+
+    <div class="upload-box">
+        <input type="file" id="audioFile" accept=".wav,.mp3,.ogg,.m4a,.flac">
+        <div id="file-size-warning" class="file-size-warning">
+            <i class="fas fa-exclamation-triangle"></i> 
+            Large file detected. Processing might take longer.
+        </div>
+        <button class="btn btn-primary" id="analyze-btn" onclick="uploadFile()">
+            <i class="fas fa-microphone-alt"></i> Analyze Audio
+        </button>
+        <button class="btn btn-secondary" onclick="clearResult()">
+            <i class="fas fa-trash-alt"></i> Clear
+        </button>
+        <div id="loading-indicator">Processing... <i class="fas fa-spinner fa-spin"></i></div>
+    </div>
+
+    <div id="file-name"></div>
+    <audio id="audio-player" controls></audio>
+    <div id="error-message"></div>
+
+    <div id="result" class="result-box"></div>
+
+    <script>
+        // Language code to full name mapping
+        const LANGUAGE_MAP = {
+            'af': 'Afrikaans',
+            'ar': 'Arabic',
+            'az': 'Azerbaijani',
+            'be': 'Belarusian',
+            'bg': 'Bulgarian',
+            'bn': 'Bengali',
+            'bs': 'Bosnian',
+            'ca': 'Catalan',
+            'ceb': 'Cebuano',
+            'co': 'Corsican',
+            'cs': 'Czech',
+            'cy': 'Welsh',
+            'da': 'Danish',
+            'de': 'German',
+            'el': 'Greek',
+            'en': 'English',
+            'eo': 'Esperanto',
+            'es': 'Spanish',
+            'et': 'Estonian',
+            'eu': 'Basque',
+            'fa': 'Persian',
+            'fi': 'Finnish',
+            'fr': 'French',
+            'fy': 'Frisian',
+            'ga': 'Irish',
+            'gd': 'Scots Gaelic',
+            'gl': 'Galician',
+            'gu': 'Gujarati',
+            'ha': 'Hausa',
+            'haw': 'Hawaiian',
+            'he': 'Hebrew',
+            'hi': 'Hindi',
+            'hmn': 'Hmong',
+            'hr': 'Croatian',
+            'ht': 'Haitian Creole',
+            'hu': 'Hungarian',
+            'hy': 'Armenian',
+            'id': 'Indonesian',
+            'ig': 'Igbo',
+            'is': 'Icelandic',
+            'it': 'Italian',
+            'iw': 'Hebrew',
+            'ja': 'Japanese',
+            'jw': 'Javanese',
+            'ka': 'Georgian',
+            'kk': 'Kazakh',
+            'km': 'Khmer',
+            'kn': 'Kannada',
+            'ko': 'Korean',
+            'ku': 'Kurdish',
+            'ky': 'Kyrgyz',
+            'la': 'Latin',
+            'lb': 'Luxembourgish',
+            'lo': 'Lao',
+            'lt': 'Lithuanian',
+            'lv': 'Latvian',
+            'mg': 'Malagasy',
+            'mi': 'Maori',
+            'mk': 'Macedonian',
+            'ml': 'Malayalam',
+            'mn': 'Mongolian',
+            'mr': 'Marathi',
+            'ms': 'Malay',
+            'mt': 'Maltese',
+            'my': 'Myanmar (Burmese)',
+            'ne': 'Nepali',
+            'nl': 'Dutch',
+            'no': 'Norwegian',
+            'ny': 'Chichewa',
+            'or': 'Odia (Oriya)',
+            'pa': 'Punjabi',
+            'pl': 'Polish',
+            'ps': 'Pashto',
+            'pt': 'Portuguese',
+            'ro': 'Romanian',
+            'ru': 'Russian',
+            'rw': 'Kinyarwanda',
+            'sd': 'Sindhi',
+            'si': 'Sinhala',
+            'sk': 'Slovak',
+            'sl': 'Slovenian',
+            'sm': 'Samoan',
+            'sn': 'Shona',
+            'so': 'Somali',
+            'sq': 'Albanian',
+            'sr': 'Serbian',
+            'st': 'Sesotho',
+            'su': 'Sundanese',
+            'sv': 'Swedish',
+            'sw': 'Swahili',
+            'ta': 'Tamil',
+            'te': 'Telugu',
+            'tg': 'Tajik',
+            'th': 'Thai',
+            'tk': 'Turkmen',
+            'tl': 'Tagalog',
+            'tr': 'Turkish',
+            'tt': 'Tatar',
+            'ug': 'Uyghur',
+            'uk': 'Ukrainian',
+            'ur': 'Urdu',
+            'uz': 'Uzbek',
+            'vi': 'Vietnamese',
+            'xh': 'Xhosa',
+            'yi': 'Yiddish',
+            'yo': 'Yoruba',
+            'zh': 'Chinese',
+            'zh-cn': 'Chinese (Simplified)',
+            'zh-tw': 'Chinese (Traditional)',
+            'zu': 'Zulu'
+        };
+
+        // Helper function to get full language name
+        function getLanguageName(code) {
+            // Handle cases where code might be in format "ko:0.99999"
+            const cleanCode = code.split(':')[0].toLowerCase();
+            return LANGUAGE_MAP[cleanCode] || code;
+        }
+
+        // Add event listener for file input change
+        document.getElementById('audioFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            // Display file name
+            document.getElementById("file-name").textContent = `File: ${file.name}`;
+            
+            // Create object URL for audio player
+            document.getElementById("audio-player").src = URL.createObjectURL(file);
+            document.getElementById("audio-player").style.display = "block";
+            
+            // Check file size and show warning if large
+            const fileSizeInMB = file.size / (1024 * 1024);
+            if (fileSizeInMB > 10) {
+                document.getElementById("file-size-warning").style.display = "block";
+            } else {
+                document.getElementById("file-size-warning").style.display = "none";
+            }
+        });
+
+        function uploadFile() {
+            const fileInput = document.getElementById('audioFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showError('Please select an audio file first!');
+                return;
+            }
+
+            // Check file type
+            const validTypes = ['.wav', '.mp3', '.ogg', '.m4a', '.flac'];
+            const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
+            if (!validTypes.includes(fileExtension)) {
+                showError(`Invalid file type. Please upload ${validTypes.join(', ')}`);
+                return;
+            }
+
+            resetUI();
+            document.getElementById("file-name").textContent = `File: ${file.name}`;
+            document.getElementById("audio-player").src = URL.createObjectURL(file);
+            document.getElementById("audio-player").style.display = "block";
+
+            const formData = new FormData();
+            formData.append('audio_file', file);
+
+            processAudio(formData);
+        }
+
+        function processAudio(formData) {
+            // Disable the analyze button
+            const analyzeButton = document.getElementById("analyze-btn");
+            analyzeButton.disabled = true;
+            analyzeButton.style.opacity = "0.7";
+            
+            // Show loading indicator
+            document.getElementById("loading-indicator").style.display = "block";
+
+            fetch('/', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Server error: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log("Server response:", data);  // Debug log
+                document.getElementById("loading-indicator").style.display = "none";
+                analyzeButton.disabled = false;
+                analyzeButton.style.opacity = "1";
+                
+                if (data.error) {
+                    return showError(data.error);
+                }
+                displayResults(data);
+            })
+            .catch(err => {
+                showError(`Error: ${err.message}`);
+                document.getElementById("loading-indicator").style.display = "none";
+                analyzeButton.disabled = false;
+                analyzeButton.style.opacity = "1";
+            });
+        }
+
+        function displayResults(data) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '';
+            resultDiv.style.display = 'block';
+
+            // Display diagnosis section
+            if (data.dysarthria_analysis) {
+                const analysis = data.dysarthria_analysis;
+                const diagnosisSection = document.createElement('div');
+                diagnosisSection.className = 'result-section';
+                
+                // Diagnosis title
+                const diagnosisTitle = document.createElement('div');
+                diagnosisTitle.className = 'result-title';
+                diagnosisTitle.innerHTML = '<i class="fas fa-heartbeat"></i> Dysarthria Analysis';
+                diagnosisSection.appendChild(diagnosisTitle);
+                
+                // Diagnosis result
+                const diagnosisResult = document.createElement('div');
+                diagnosisResult.className = 'diagnosis-result';
+                
+                const diagnosisIcon = document.createElement('i');
+                diagnosisIcon.className = analysis.diagnosis === 'Dysarthria' ? 
+                    'dysarthria-icon fas fa-exclamation-triangle dysarthria-positive' : 
+                    'dysarthria-icon fas fa-check-circle dysarthria-negative';
+                
+                const diagnosisText = document.createElement('span');
+                diagnosisText.innerHTML = `<strong>Final:</strong> Diagnosis: ${analysis.diagnosis}`;
+                
+                diagnosisResult.appendChild(diagnosisIcon);
+                diagnosisResult.appendChild(diagnosisText);
+                diagnosisSection.appendChild(diagnosisResult);
+                
+                // Severity information (if dysarthria detected)
+                if (analysis.diagnosis === 'Dysarthria' && analysis.severity) {
+                    const severityDiv = document.createElement('div');
+                    severityDiv.style.marginTop = '15px';
+                    
+                    const severityText = document.createElement('div');
+                    const severityClass = analysis.severity.toLowerCase();
+                    severityText.innerHTML = `<strong>Severity Assessment:</strong> Severity Level: 
+                        <span class="severity-indicator severity-${severityClass}">
+                            ${analysis.severity}
+                        </span>`;
+                    
+                    const severityConfidence = document.createElement('div');
+                    //severityConfidence.textContent = `Confidence: ${analysis.confidence}`;
+                    
+                    severityDiv.appendChild(severityText);
+                    severityDiv.appendChild(severityConfidence);
+                    diagnosisSection.appendChild(severityDiv);
+                    
+                    // Probability bars for all severity classes
+                    if (analysis.severity_probabilities) {
+                        const probabilityTitle = document.createElement('div');
+                        probabilityTitle.style.marginTop = '20px';
+                        probabilityTitle.innerHTML = '<strong>Severity Probabilities:</strong>';
+                        diagnosisSection.appendChild(probabilityTitle);
+                        
+                        const probabilityBars = document.createElement('div');
+                        probabilityBars.className = 'probability-bars';
+                        
+                        for (const [severity, probability] of Object.entries(analysis.severity_probabilities)) {
+                            const barContainer = document.createElement('div');
+                            barContainer.className = 'probability-bar';
+                            
+                            const barFill = document.createElement('div');
+                            barFill.className = 'probability-fill';
+                            barFill.style.height = `${probability * 100}%`;
+                            
+                            const barLabel = document.createElement('div');
+                            barLabel.className = 'probability-label';
+                            barLabel.textContent = `${severity} (${Math.round(probability * 100)}%)`;
+                            
+                            barContainer.appendChild(barFill);
+                            barContainer.appendChild(barLabel);
+                            probabilityBars.appendChild(barContainer);
+                        }
+                        
+                        diagnosisSection.appendChild(probabilityBars);
+                    }
+                }
+                
+                resultDiv.appendChild(diagnosisSection);
+            }
+
+            // Display transcription section
+            if (data.transcription) {
+                const transcriptionSection = document.createElement('div');
+                transcriptionSection.className = 'result-section';
+                
+                const transcriptionTitle = document.createElement('div');
+                transcriptionTitle.className = 'result-title';
+                transcriptionTitle.innerHTML = '<i class="fas fa-comment-alt"></i> Transcription';
+                
+                const transcriptionContent = document.createElement('div');
+                transcriptionContent.className = 'result-content';
+                
+                const languageInfo = document.createElement('div');
+                
+                // Get language information in the most reliable way
+                let langName = 'Unknown';
+                let confidence = 'N/A';
+                
+                if (data.translation_info) {
+                    // First try detected_language
+                    if (data.translation_info.detected_language) {
+                        langName = data.translation_info.detected_language;
+                    } 
+                    // If not available, try to convert language_code
+                    else if (data.translation_info.language_code) {
+                        langName = getLanguageName(data.translation_info.language_code);
+                    }
+                    
+                    // Get confidence if available
+                    if (data.translation_info.confidence) {
+                        confidence = data.translation_info.confidence;
+                    }
+                }
+                
+                languageInfo.innerHTML = `<strong>Detected Language:</strong> ${langName} (${confidence})`;
+                transcriptionContent.appendChild(languageInfo);
+                
+                const transcriptionText = document.createElement('div');
+                transcriptionText.className = 'transcription-text';
+                transcriptionText.textContent = data.transcription || 'No transcription available';
+                transcriptionContent.appendChild(transcriptionText);
+                
+                transcriptionSection.appendChild(transcriptionTitle);
+                transcriptionSection.appendChild(transcriptionContent);
+                resultDiv.appendChild(transcriptionSection);
+            }
+
+            // Display translation section if available
+            if (data.translation_info?.translation) {
+                const translationSection = document.createElement('div');
+                translationSection.className = 'result-section';
+                
+                const translationTitle = document.createElement('div');
+                translationTitle.className = 'result-title';
+                translationTitle.innerHTML = '<i class="fas fa-language"></i> Translation (English)';
+                
+                const translationContent = document.createElement('div');
+                translationContent.className = 'result-content';
+                
+                const translationText = document.createElement('div');
+                translationText.className = 'transcription-text';
+                translationText.textContent = data.translation_info.translation;
+                translationContent.appendChild(translationText);
+                
+                translationSection.appendChild(translationTitle);
+                translationSection.appendChild(translationContent);
+                resultDiv.appendChild(translationSection);
+            }
+        }
+
+        function clearResult() {
+            resetUI();
+            document.getElementById('audioFile').value = "";
+            document.getElementById('file-size-warning').style.display = "none";
+        }
+
+        function resetUI() {
+            document.getElementById('result').innerHTML = "";
+            document.getElementById('result').style.display = "none";
+            document.getElementById('file-name').textContent = "";
+            document.getElementById('error-message').textContent = "";
+            document.getElementById('error-message').style.display = "none";
+            document.getElementById('audio-player').style.display = "none";
+            document.getElementById('loading-indicator').style.display = "none";
+        }
+
+        function showError(message) {
+            const errorElement = document.getElementById('error-message');
+            errorElement.textContent = message;
+            errorElement.style.display = "block";
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,457 @@
+from flask import Flask, render_template, request, jsonify
+from transformers import WhisperProcessor, WhisperForConditionalGeneration
+import os
+import subprocess
+import torch
+import librosa
+import soundfile as sf
+from datetime import datetime
+from langdetect import detect_langs
+from deep_translator import GoogleTranslator  
+import asyncio
+import pickle
+import tensorflow as tf
+from transformers import Wav2Vec2Processor, Wav2Vec2ForSequenceClassification
+import torchaudio
+import numpy as np
+
+app = Flask(__name__)
+
+# Configuration
+ALLOWED_EXTENSIONS = {'wav', 'mp3', 'ogg', 'm4a', 'flac'}
+UPLOAD_FOLDER = 'uploads'
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Expanded Language code to full name mapping
+LANGUAGE_MAPPING = {
+    'af': 'Afrikaans',
+    'ar': 'Arabic',
+    'az': 'Azerbaijani',
+    'be': 'Belarusian',
+    'bg': 'Bulgarian',
+    'bn': 'Bengali',
+    'bs': 'Bosnian',
+    'ca': 'Catalan',
+    'ceb': 'Cebuano',
+    'co': 'Corsican',
+    'cs': 'Czech',
+    'cy': 'Welsh',
+    'da': 'Danish',
+    'de': 'German',
+    'el': 'Greek',
+    'en': 'English',
+    'eo': 'Esperanto',
+    'es': 'Spanish',
+    'et': 'Estonian',
+    'eu': 'Basque',
+    'fa': 'Persian',
+    'fi': 'Finnish',
+    'fr': 'French',
+    'fy': 'Frisian',
+    'ga': 'Irish',
+    'gd': 'Scots Gaelic',
+    'gl': 'Galician',
+    'gu': 'Gujarati',
+    'ha': 'Hausa',
+    'haw': 'Hawaiian',
+    'he': 'Hebrew',
+    'hi': 'Hindi',
+    'hmn': 'Hmong',
+    'hr': 'Croatian',
+    'ht': 'Haitian Creole',
+    'hu': 'Hungarian',
+    'hy': 'Armenian',
+    'id': 'Indonesian',
+    'ig': 'Igbo',
+    'is': 'Icelandic',
+    'it': 'Italian',
+    'iw': 'Hebrew',
+    'ja': 'Japanese',
+    'jw': 'Javanese',
+    'ka': 'Georgian',
+    'kk': 'Kazakh',
+    'km': 'Khmer',
+    'kn': 'Kannada',
+    'ko': 'Korean',
+    'ku': 'Kurdish',
+    'ky': 'Kyrgyz',
+    'la': 'Latin',
+    'lb': 'Luxembourgish',
+    'lo': 'Lao',
+    'lt': 'Lithuanian',
+    'lv': 'Latvian',
+    'mg': 'Malagasy',
+    'mi': 'Maori',
+    'mk': 'Macedonian',
+    'ml': 'Malayalam',
+    'mn': 'Mongolian',
+    'mr': 'Marathi',
+    'ms': 'Malay',
+    'mt': 'Maltese',
+    'my': 'Myanmar (Burmese)',
+    'ne': 'Nepali',
+    'nl': 'Dutch',
+    'no': 'Norwegian',
+    'ny': 'Chichewa',
+    'or': 'Odia (Oriya)',
+    'pa': 'Punjabi',
+    'pl': 'Polish',
+    'ps': 'Pashto',
+    'pt': 'Portuguese',
+    'ro': 'Romanian',
+    'ru': 'Russian',
+    'rw': 'Kinyarwanda',
+    'sd': 'Sindhi',
+    'si': 'Sinhala',
+    'sk': 'Slovak',
+    'sl': 'Slovenian',
+    'sm': 'Samoan',
+    'sn': 'Shona',
+    'so': 'Somali',
+    'sq': 'Albanian',
+    'sr': 'Serbian',
+    'st': 'Sesotho',
+    'su': 'Sundanese',
+    'sv': 'Swedish',
+    'sw': 'Swahili',
+    'ta': 'Tamil',
+    'te': 'Telugu',
+    'tg': 'Tajik',
+    'th': 'Thai',
+    'tk': 'Turkmen',
+    'tl': 'Tagalog',
+    'tr': 'Turkish',
+    'tt': 'Tatar',
+    'ug': 'Uyghur',
+    'uk': 'Ukrainian',
+    'ur': 'Urdu',
+    'uz': 'Uzbek',
+    'vi': 'Vietnamese',
+    'xh': 'Xhosa',
+    'yi': 'Yiddish',
+    'yo': 'Yoruba',
+    'zh': 'Chinese',
+    'zh-cn': 'Chinese (Simplified)',
+    'zh-tw': 'Chinese (Traditional)',
+    'zu': 'Zulu'
+}
+
+# Hardware configuration
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Load fine-tuned Whisper model
+MODEL_PATH = r"F:\main_project\speech_to_text_webapp_deep_edit_04_main_project\speech_to_text_webapp_deep\whisper_finetuned_model-20250311T044337Z-001\whisper_finetuned_model"
+
+try:
+    processor = WhisperProcessor.from_pretrained(MODEL_PATH)
+    model = WhisperForConditionalGeneration.from_pretrained(MODEL_PATH).to(device)
+    print("Fine-tuned Whisper model loaded successfully!")
+except Exception as e:
+    print(f"Error loading fine-tuned model: {e}")
+    processor, model = None, None  # Disable model processing if load fails
+
+try:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+except Exception as e:
+    print(f"Error setting event loop: {e}")
+
+# Load Dysarthria models
+class UnifiedDysarthriaModel:
+    def __init__(self, binary_model_path=None, severity_model_path=None):
+        if binary_model_path and severity_model_path:
+            # Load binary classification model (TensorFlow)
+            self.binary_model = tf.keras.models.load_model(binary_model_path)
+
+            # Set up device for PyTorch
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"Using device: {self.device}")
+
+            # Load severity classification model (PyTorch/Wav2Vec2)
+            self.processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
+            self.severity_model = Wav2Vec2ForSequenceClassification.from_pretrained(
+                "facebook/wav2vec2-base-960h",
+                num_labels=4
+            ).to(self.device)
+
+            # Load saved weights for severity model
+            self.severity_model.load_state_dict(torch.load(severity_model_path, map_location=self.device))
+            self.severity_model.eval()
+
+            # Store model paths
+            self.binary_model_path = binary_model_path
+            self.severity_model_path = severity_model_path
+
+            # Mapping for severity classes
+            self.severity_classes = ["Mild", "Moderate", "Severe", "Control"]
+
+    def process_audio_for_binary(self, audio_path, sr=16000):
+        try:
+            y, sr = librosa.load(audio_path, sr=sr)
+            mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+            max_length = 300
+            if mfcc.shape[1] > max_length:
+                mfcc = mfcc[:, :max_length]
+            else:
+                pad_width = max_length - mfcc.shape[1]
+                mfcc = np.pad(mfcc, pad_width=((0, 0), (0, pad_width)))
+            mfcc = mfcc.reshape(1, mfcc.shape[0], mfcc.shape[1], 1)
+            return mfcc, y
+        except Exception as e:
+            print(f"Error processing audio file for binary model: {str(e)}")
+            return None, None
+
+    def process_audio_for_severity(self, audio_path):
+        try:
+            speech, sr = torchaudio.load(audio_path)
+            speech = speech.squeeze(0)
+            if sr != 16000:
+                speech = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)(speech)
+            inputs = self.processor(
+                speech.numpy(),
+                sampling_rate=16000,
+                return_tensors="pt",
+                padding="max_length",
+                truncation=True,
+                max_length=16000,
+                return_attention_mask=True
+            )
+            return inputs
+        except Exception as e:
+            print(f"Error processing audio file for severity model: {str(e)}")
+            return None
+
+    def predict_binary(self, features):
+        prediction = self.binary_model.predict(features, verbose=0)
+        probability = prediction[0][0]
+        predicted_class = 1 if probability > 0.5 else 0
+        return predicted_class, probability
+
+    def predict_severity(self, inputs):
+        with torch.no_grad():
+            input_values = inputs.input_values.to(self.device)
+            attention_mask = inputs.attention_mask.to(self.device)
+            outputs = self.severity_model(input_values, attention_mask=attention_mask).logits
+            probabilities = torch.nn.functional.softmax(outputs, dim=1)
+            predicted_class = torch.argmax(probabilities, dim=1).item()
+            class_probability = probabilities[0][predicted_class].item()
+            return predicted_class, class_probability, probabilities[0].tolist()
+
+    def analyze_audio(self, audio_path):
+        results = {
+            "file_path": audio_path,
+            "is_dysarthria": False,
+            "binary_confidence": 0.0,
+            "severity": None,
+            "severity_confidence": 0.0,
+            "severity_probabilities": {},
+            "binary_prediction": None,
+            "severity_prediction": None
+        }
+
+        # Binary Classification
+        binary_features, audio_data = self.process_audio_for_binary(audio_path)
+        if binary_features is None:
+            results["error"] = "Failed to process audio for binary classification"
+            return results
+
+        binary_class, binary_prob = self.predict_binary(binary_features)
+        results["binary_prediction"] = "Dysarthria" if binary_class == 1 else "Normal"
+        results["binary_confidence"] = float(max(binary_prob, 1-binary_prob))
+
+        # Severity Classification
+        severity_inputs = self.process_audio_for_severity(audio_path)
+        if severity_inputs is not None:
+            severity_class, severity_prob, all_probs = self.predict_severity(severity_inputs)
+            results["severity_prediction"] = self.severity_classes[severity_class]
+            for i, prob in enumerate(all_probs):
+                results["severity_probabilities"][self.severity_classes[i]] = float(prob)
+        else:
+            results["error"] = "Failed to process audio for severity classification"
+            results["is_dysarthria"] = (binary_class == 1)
+            return results
+
+        # Combine results
+        if binary_class == 1 or severity_class != 3:
+            results["is_dysarthria"] = True
+            if severity_class != 3:
+                results["severity"] = self.severity_classes[severity_class]
+                results["severity_confidence"] = severity_prob
+            else:
+                file_name = os.path.basename(audio_path)
+                file_name_without_ext = os.path.splitext(file_name)[0]
+                last_digit = None
+                for char in reversed(file_name_without_ext):
+                    if char.isdigit():
+                        last_digit = char
+                        break
+                if "mild" in audio_path.lower() or (last_digit in ["1", "3", "5", "7", "9"]):
+                    results["severity"] = "Mild"
+                else:
+                    results["severity"] = "Moderate"
+                results["severity_confidence"] = 0.5
+        else:
+            results["is_dysarthria"] = False
+
+        return results
+
+# Initialize Dysarthria model
+try:
+    binary_model_path = 'best_binary_model.h5'  
+    severity_model_path = 'severity_classifier.pth'  # Update with your actual path
+    dysarthria_model = UnifiedDysarthriaModel(binary_model_path, severity_model_path)
+    print("Dysarthria models loaded successfully!")
+except Exception as e:
+    print(f"Error loading dysarthria models: {e}")
+    dysarthria_model = None
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def preprocess_audio(file_path):
+    output_path = os.path.splitext(file_path)[0] + "_processed.wav"
+    try:
+        subprocess.run([
+            'ffmpeg', '-i', file_path,
+            '-ar', '16000',
+            '-ac', '1',
+            '-acodec', 'pcm_s16le',
+            '-y',
+            output_path
+        ], check=True, stderr=subprocess.PIPE)
+        return output_path
+    except subprocess.CalledProcessError as e:
+        print(f"Error in preprocess_audio: {e}")
+        return None
+
+def get_language_name(lang_code):
+    """Convert language code to full language name"""
+    # Handle cases where langdetect returns language with score (e.g., 'ko:0.99999')
+    if ':' in lang_code:
+        lang_code = lang_code.split(':')[0]
+    return LANGUAGE_MAPPING.get(lang_code.lower(), lang_code)
+
+def translate_text(text, source_lang, target_lang='en'):
+    """Translate text from source language to target language"""
+    try:
+        if not text.strip():
+            return ""
+            
+        # Handle cases where langdetect returns language with score
+        if ':' in source_lang:
+            source_lang = source_lang.split(':')[0]
+            
+        # Some language codes need to be adjusted for GoogleTranslator
+        if source_lang == 'iw':
+            source_lang = 'he'  # Hebrew
+        elif source_lang == 'zh-cn' or source_lang == 'zh-tw':
+            source_lang = 'zh'  # Chinese
+            
+        translator = GoogleTranslator(source=source_lang, target=target_lang)
+        translated_text = translator.translate(text)
+        return translated_text
+    except Exception as e:
+        print(f"Translation error: {str(e)}")
+        return ""
+
+@app.route("/", methods=["GET", "POST"])
+def index():
+    if request.method == "POST":
+        if 'audio_file' not in request.files:
+            return jsonify({"error": "No file uploaded"}), 400
+        file = request.files['audio_file']
+        if file.filename == '':
+            return jsonify({"error": "No selected file"}), 400
+        if not allowed_file(file.filename):
+            return jsonify({"error": "Unsupported file format"}), 400
+
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            filename = f"{timestamp}_{file.filename}"
+            file_path = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(file_path)
+
+            if os.path.getsize(file_path) > MAX_FILE_SIZE:
+                os.remove(file_path)
+                return jsonify({"error": "File size exceeds 100MB limit"}), 400
+
+            processed_path = preprocess_audio(file_path)
+            if processed_path is None:
+                os.remove(file_path)
+                return jsonify({"error": "Audio preprocessing failed"}), 500
+
+            # Perform speech recognition
+            audio, sr = librosa.load(processed_path, sr=16000)
+            sf.write(processed_path, audio, sr)
+
+            transcription = ""
+            if processor and model:
+                input_features = processor(audio, sampling_rate=16000, return_tensors="pt").input_features.to(device)
+                with torch.no_grad():
+                    predicted_ids = model.generate(input_features)
+                    transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+
+            # Perform dysarthria analysis
+            dysarthria_result = None
+            if dysarthria_model:
+                dysarthria_result = dysarthria_model.analyze_audio(processed_path)
+                
+                # Format the dysarthria results for display
+                dysarthria_display = {
+                    "diagnosis": "Dysarthria" if dysarthria_result["is_dysarthria"] else "Normal Speech",
+                    "severity": dysarthria_result.get("severity", "N/A"),
+                    "confidence": f"{dysarthria_result.get('severity_confidence', 0)*100:.2f}%" if dysarthria_result.get("severity") else "N/A"
+                }
+            else:
+                dysarthria_display = {"error": "Dysarthria analysis not available"}
+
+            # Language detection and translation
+            translation_info = {}
+            try:
+                if transcription.strip():
+                    detected_langs = detect_langs(transcription)
+                    if detected_langs:
+                        # Get the most probable language
+                        primary_lang = detected_langs[0]
+                        lang_code = primary_lang.lang
+                        confidence = primary_lang.prob
+                        
+                        # Get full language name
+                        language_name = get_language_name(lang_code)
+                        
+                        translation_info = {
+                            "detected_language": language_name,
+                            "language_code": lang_code,
+                            "confidence": f"{confidence*100:.1f}%"
+                        }
+
+                        if lang_code != 'en':
+                            translated_text = translate_text(transcription, lang_code)
+                            if translated_text:
+                                translation_info["translation"] = translated_text
+                            else:
+                                translation_info["translation_error"] = "Translation failed"
+                    else:
+                        translation_info["language_error"] = "Could not detect language"
+            except Exception as e:
+                translation_info["language_error"] = str(e)
+
+            # Cleanup
+            os.remove(file_path)
+            os.remove(processed_path)
+
+            return jsonify({
+                "transcription": transcription,
+                "translation_info": translation_info,
+                "dysarthria_analysis": dysarthria_display
+            })
+
+        except subprocess.CalledProcessError as e:
+            return jsonify({"error": f"Audio processing failed: {e.stderr.decode()}"}), 500
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    return render_template('index.html')
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=False)
